@@ -1,7 +1,8 @@
-use failure::Error;
-use std::convert::TryInto;
 
 //! lexicographic sort order encoding.
+
+use failure::Error;
+use std::convert::TryInto;
 
 pub trait IndexKey: Sized {
     fn to_key(&self) -> Vec<u8>;
