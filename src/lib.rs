@@ -18,6 +18,12 @@ impl IndexKey for String {
     }
 }
 
+#[test]
+fn test_string(){
+    let s : String = "123".into();
+    assert_eq!(String::try_from_key(&s.to_key()).unwrap(),s)
+}
+
 impl IndexKey for Vec<u8> {
     fn to_key(&self) -> Vec<u8> {
         self.to_vec()
@@ -26,6 +32,7 @@ impl IndexKey for Vec<u8> {
         Ok(src.to_vec())
     }
 }
+
 
 macro_rules! impl_u {
     ($t:ident) => {
@@ -88,23 +95,21 @@ impl_i!(i64);
 impl_i!(i128);
 
 macro_rules! impl_f {
-    ($f:ty,$fi:ident,$i:ident,$u:ident) => {
+    ($f:ty,$fi:ident,$i:ident,$u:ident,$n:expr) => {
         impl IndexKey for $f {
             fn to_key(&self) -> Vec<u8> {
                 use std::$i::MIN;
+                use std::mem::size_of;
                 let value = self.to_bits() as $i;
-                if value < 0 { !value } else { value ^ MIN }
+                (((value >> (size_of::<$i>()*8-1)) | MIN) ^ value)
                     .to_be_bytes()
                     .to_vec()
             }
             fn try_from_key(src: &[u8]) -> Result<$f, Error> {
                 use std::$i::MIN;
-                let value = $u::from_be_bytes(src.try_into()?);
-                let result = if (value as $i) < 0 {
-                    <$f>::from_bits(value ^ (MIN as $u))
-                } else {
-                    <$f>::from_bits(!value)
-                };
+                use std::mem::size_of;
+                let value = $i::from_be_bytes(src.try_into()?);
+                let result = <$f>::from_bits(((!value>>(size_of::<$i>()*8-1) | MIN) ^ value) as $u);
                 Ok(result)
             }
         }
@@ -151,5 +156,5 @@ macro_rules! impl_f {
     };
 }
 
-impl_f!(f32, f32, i32, u32);
-impl_f!(f64, f64, i64, u64);
+impl_f!(f32, f32, i32, u32,31);
+impl_f!(f64, f64, i64, u64,63);
