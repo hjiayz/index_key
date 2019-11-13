@@ -1,6 +1,6 @@
 [package]
 name = "index_key"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["hjiayz <hjiayz@hotmail.com>"]
 repository = "https://github.com/hjiayz/index_key.git"
 edition = "2018"
@@ -9,4 +9,4 @@ keywords = ["lexicographic", "index", "key"]
 license = "AGPL-3.0"
 
 [dependencies]
-failure = "0.1.6"
+anyhow = "1.0"

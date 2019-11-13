@@ -1,46 +1,59 @@
-
 //! lexicographic sort order encoding.
 
-use failure::Error;
+use anyhow::Error;
 use std::convert::TryInto;
 
-pub trait IndexKey: Sized {
+pub trait IndexKey<'a>: Sized {
     fn to_key(&self) -> Vec<u8>;
-    fn try_from_key(key: &[u8]) -> Result<Self, Error>;
+    fn try_from_key(key: &'a [u8]) -> Result<Self, Error>;
 }
 
-impl IndexKey for String {
+impl<'a> IndexKey<'a> for String {
     fn to_key(&self) -> Vec<u8> {
         self.as_bytes().to_vec()
     }
-    fn try_from_key(src: &[u8]) -> Result<String, Error> {
+    fn try_from_key(src: &'a [u8]) -> Result<String, Error> {
         Ok(std::str::from_utf8(src)?.to_string())
     }
 }
 
 #[test]
-fn test_string(){
-    let s : String = "123".into();
-    assert_eq!(String::try_from_key(&s.to_key()).unwrap(),s)
+fn test_string() {
+    let s: String = "123".into();
+    assert_eq!(String::try_from_key(&s.to_key()).unwrap(), s)
 }
 
-impl IndexKey for Vec<u8> {
+impl<'a> IndexKey<'a> for &'a str {
+    fn to_key(&self) -> Vec<u8> {
+        self.as_bytes().to_vec()
+    }
+    fn try_from_key(src: &'a [u8]) -> Result<&'a str, Error> {
+        Ok(std::str::from_utf8(src)?)
+    }
+}
+
+#[test]
+fn test_str() {
+    let s = "123";
+    assert_eq!(<&str>::try_from_key(&s.to_key()).unwrap(), s)
+}
+
+impl<'a> IndexKey<'a> for Vec<u8> {
     fn to_key(&self) -> Vec<u8> {
         self.to_vec()
     }
-    fn try_from_key(src: &[u8]) -> Result<Vec<u8>, Error> {
+    fn try_from_key(src: &'a [u8]) -> Result<Vec<u8>, Error> {
         Ok(src.to_vec())
     }
 }
 
-
 macro_rules! impl_u {
     ($t:ident) => {
-        impl IndexKey for $t {
+        impl<'a> IndexKey<'a> for $t {
             fn to_key(&self) -> Vec<u8> {
                 self.to_be_bytes().to_vec()
             }
-            fn try_from_key(src: &[u8]) -> Result<$t, Error> {
+            fn try_from_key(src: &'a [u8]) -> Result<$t, Error> {
                 Ok(<$t>::from_be_bytes(src.try_into()?))
             }
         }
@@ -65,12 +78,12 @@ impl_u!(u128);
 
 macro_rules! impl_i {
     ($t:ident) => {
-        impl IndexKey for $t {
+        impl<'a> IndexKey<'a> for $t {
             fn to_key(&self) -> Vec<u8> {
                 use std::$t::MIN;
                 (*self ^ MIN).to_be_bytes().to_vec()
             }
-            fn try_from_key(src: &[u8]) -> Result<$t, Error> {
+            fn try_from_key(src: &'a [u8]) -> Result<$t, Error> {
                 use std::$t::MIN;
                 Ok(<$t>::from_be_bytes(src.try_into()?) ^ MIN)
             }
@@ -96,20 +109,21 @@ impl_i!(i128);
 
 macro_rules! impl_f {
     ($f:ty,$fi:ident,$i:ident,$u:ident,$n:expr) => {
-        impl IndexKey for $f {
+        impl<'a> IndexKey<'a> for $f {
             fn to_key(&self) -> Vec<u8> {
-                use std::$i::MIN;
                 use std::mem::size_of;
+                use std::$i::MIN;
                 let value = self.to_bits() as $i;
-                (((value >> (size_of::<$i>()*8-1)) | MIN) ^ value)
+                (((value >> (size_of::<$i>() * 8 - 1)) | MIN) ^ value)
                     .to_be_bytes()
                     .to_vec()
             }
-            fn try_from_key(src: &[u8]) -> Result<$f, Error> {
-                use std::$i::MIN;
+            fn try_from_key(src: &'a [u8]) -> Result<$f, Error> {
                 use std::mem::size_of;
+                use std::$i::MIN;
                 let value = $i::from_be_bytes(src.try_into()?);
-                let result = <$f>::from_bits(((!value>>(size_of::<$i>()*8-1) | MIN) ^ value) as $u);
+                let result =
+                    <$f>::from_bits(((!value >> (size_of::<$i>() * 8 - 1) | MIN) ^ value) as $u);
                 Ok(result)
             }
         }
@@ -156,5 +170,5 @@ macro_rules! impl_f {
     };
 }
 
-impl_f!(f32, f32, i32, u32,31);
-impl_f!(f64, f64, i64, u64,63);
+impl_f!(f32, f32, i32, u32, 31);
+impl_f!(f64, f64, i64, u64, 63);
