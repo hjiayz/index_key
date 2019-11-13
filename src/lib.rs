@@ -3,12 +3,14 @@
 use anyhow::Error;
 use std::convert::TryInto;
 
-pub trait IndexKey<Target = Self>: Sized {
+pub trait IndexKey: Sized {
+    type Target;
     fn to_key(&self) -> Vec<u8>;
-    fn try_from_key(key: &[u8]) -> Result<Target, Error>;
+    fn try_from_key(key: &[u8]) -> Result<Self::Target, Error>;
 }
 
 impl IndexKey for String {
+    type Target = String;
     fn to_key(&self) -> Vec<u8> {
         self.as_bytes().to_vec()
     }
@@ -23,7 +25,8 @@ fn test_string() {
     assert_eq!(String::try_from_key(&s.to_key()).unwrap(), s)
 }
 
-impl IndexKey<String> for &str {
+impl IndexKey for &str {
+    type Target = String;
     fn to_key(&self) -> Vec<u8> {
         self.as_bytes().to_vec()
     }
@@ -39,6 +42,7 @@ fn test_str() {
 }
 
 impl IndexKey for Vec<u8> {
+    type Target = Vec<u8>;
     fn to_key(&self) -> Vec<u8> {
         self.to_vec()
     }
@@ -47,7 +51,8 @@ impl IndexKey for Vec<u8> {
     }
 }
 
-impl IndexKey<Vec<u8>> for &[u8] {
+impl IndexKey for &[u8] {
+    type Target = Vec<u8>;
     fn to_key(&self) -> Vec<u8> {
         self.to_vec()
     }
@@ -59,6 +64,7 @@ impl IndexKey<Vec<u8>> for &[u8] {
 macro_rules! impl_u {
     ($t:ident) => {
         impl IndexKey for $t {
+            type Target = $t;
             fn to_key(&self) -> Vec<u8> {
                 self.to_be_bytes().to_vec()
             }
@@ -88,6 +94,7 @@ impl_u!(u128);
 macro_rules! impl_i {
     ($t:ident) => {
         impl IndexKey for $t {
+            type Target = $t;
             fn to_key(&self) -> Vec<u8> {
                 use std::$t::MIN;
                 (*self ^ MIN).to_be_bytes().to_vec()
@@ -119,6 +126,7 @@ impl_i!(i128);
 macro_rules! impl_f {
     ($f:ty,$fi:ident,$i:ident,$u:ident,$n:expr) => {
         impl IndexKey for $f {
+            type Target = $f;
             fn to_key(&self) -> Vec<u8> {
                 use std::mem::size_of;
                 use std::$i::MIN;
