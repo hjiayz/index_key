@@ -1,75 +1,54 @@
 //! lexicographic sort order encoding.
 
-use anyhow::Error;
-use std::convert::TryInto;
-
 pub trait IndexKey: Sized {
-    type Target;
     fn to_key(&self) -> Vec<u8>;
-    fn try_from_key(key: &[u8]) -> Result<Self::Target, Error>;
+    fn from_key(key: &[u8]) -> Self;
 }
 
 impl IndexKey for String {
-    type Target = String;
+    #[inline]
     fn to_key(&self) -> Vec<u8> {
         self.as_bytes().to_vec()
     }
-    fn try_from_key(src: &[u8]) -> Result<String, Error> {
-        Ok(std::str::from_utf8(src)?.to_string())
+    #[inline]
+    fn from_key(src: &[u8]) -> String {
+        String::from_utf8_lossy(src).to_string()
     }
 }
 
 #[test]
 fn test_string() {
     let s: String = "123".into();
-    assert_eq!(String::try_from_key(&s.to_key()).unwrap(), s)
-}
-
-impl IndexKey for &str {
-    type Target = String;
-    fn to_key(&self) -> Vec<u8> {
-        self.as_bytes().to_vec()
-    }
-    fn try_from_key(src: &[u8]) -> Result<String, Error> {
-        Ok(std::str::from_utf8(src)?.to_string())
-    }
-}
-
-#[test]
-fn test_str() {
-    let s = "123";
-    assert_eq!(<&str>::try_from_key(&s.to_key()).unwrap(), s.to_string())
+    assert_eq!(String::from_key(&s.to_key()), s)
 }
 
 impl IndexKey for Vec<u8> {
-    type Target = Vec<u8>;
     fn to_key(&self) -> Vec<u8> {
         self.to_vec()
     }
-    fn try_from_key(src: &[u8]) -> Result<Vec<u8>, Error> {
-        Ok(src.to_vec())
+    fn from_key(src: &[u8]) -> Vec<u8> {
+        src.to_vec()
     }
 }
 
-impl IndexKey for &[u8] {
-    type Target = Vec<u8>;
-    fn to_key(&self) -> Vec<u8> {
-        self.to_vec()
-    }
-    fn try_from_key(src: &[u8]) -> Result<Vec<u8>, Error> {
-        Ok(src.to_vec())
-    }
+macro_rules! from_slice {
+    ($t:ty,$src:expr) => {{
+        let mut val = [0u8; std::mem::size_of::<$t>()];
+        for (v, s) in val.iter_mut().zip($src) {
+            *v = *s;
+        }
+        val
+    }};
 }
 
 macro_rules! impl_u {
     ($t:ident) => {
         impl IndexKey for $t {
-            type Target = $t;
             fn to_key(&self) -> Vec<u8> {
                 self.to_be_bytes().to_vec()
             }
-            fn try_from_key(src: &[u8]) -> Result<$t, Error> {
-                Ok(<$t>::from_be_bytes(src.try_into()?))
+            fn from_key(src: &[u8]) -> $t {
+                <$t>::from_be_bytes(from_slice!($t, src))
             }
         }
         #[test]
@@ -77,7 +56,7 @@ macro_rules! impl_u {
             use std::$t::*;
             let mut list = vec![MAX, 1, 2, 0];
             list.sort_by_key(|value| {
-                assert_eq!(<$t>::try_from_key(&value.to_key()).unwrap(), *value);
+                assert_eq!(<$t>::from_key(&value.to_key()), *value);
                 value.to_key()
             });
             assert_eq!(list, vec![0, 1, 2, MAX]);
@@ -94,14 +73,13 @@ impl_u!(u128);
 macro_rules! impl_i {
     ($t:ident) => {
         impl IndexKey for $t {
-            type Target = $t;
             fn to_key(&self) -> Vec<u8> {
                 use std::$t::MIN;
                 (*self ^ MIN).to_be_bytes().to_vec()
             }
-            fn try_from_key(src: &[u8]) -> Result<$t, Error> {
+            fn from_key(src: &[u8]) -> $t {
                 use std::$t::MIN;
-                Ok(<$t>::from_be_bytes(src.try_into()?) ^ MIN)
+                <$t>::from_be_bytes(from_slice!($t, src)) ^ MIN
             }
         }
         #[test]
@@ -109,7 +87,7 @@ macro_rules! impl_i {
             use std::$t::*;
             let mut list = vec![MAX, MIN, 1, 2, -1, -2, 0];
             list.sort_by_key(|value| {
-                assert_eq!(<$t>::try_from_key(&value.to_key()).unwrap(), *value);
+                assert_eq!(<$t>::from_key(&value.to_key()), *value);
                 value.to_key()
             });
             assert_eq!(list, vec![MIN, -2, -1, 0, 1, 2, MAX]);
@@ -126,7 +104,6 @@ impl_i!(i128);
 macro_rules! impl_f {
     ($f:ty,$fi:ident,$i:ident,$u:ident,$n:expr) => {
         impl IndexKey for $f {
-            type Target = $f;
             fn to_key(&self) -> Vec<u8> {
                 use std::mem::size_of;
                 use std::$i::MIN;
@@ -135,13 +112,11 @@ macro_rules! impl_f {
                     .to_be_bytes()
                     .to_vec()
             }
-            fn try_from_key(src: &[u8]) -> Result<$f, Error> {
+            fn from_key(src: &[u8]) -> $f {
                 use std::mem::size_of;
                 use std::$i::MIN;
-                let value = $i::from_be_bytes(src.try_into()?);
-                let result =
-                    <$f>::from_bits(((!value >> (size_of::<$i>() * 8 - 1) | MIN) ^ value) as $u);
-                Ok(result)
+                let value = $i::from_be_bytes(from_slice!($f, src));
+                <$f>::from_bits(((!value >> (size_of::<$i>() * 8 - 1) | MIN) ^ value) as $u)
             }
         }
         #[test]
@@ -162,7 +137,7 @@ macro_rules! impl_f {
                 NEG_INFINITY,
             ];
             list.sort_by_key(|value| {
-                assert_eq!(<$f>::try_from_key(&value.to_key()).unwrap(), *value);
+                assert_eq!(<$f>::from_key(&value.to_key()), *value);
                 value.to_key()
             });
             assert_eq!(
