@@ -1,6 +1,6 @@
 [package]
 name = "index_key"
-version = "0.4.0"
+version = "0.4.1"
 authors = ["hjiayz <hjiayz@hotmail.com>"]
 repository = "https://github.com/hjiayz/index_key.git"
 edition = "2018"
