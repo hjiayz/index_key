@@ -180,6 +180,28 @@ macro_rules! impl_f {
 impl_f!(f32, f32, i32, u32, 31);
 impl_f!(f64, f64, i64, u64, 63);
 
+impl IndexKey for bool {
+    fn to_key<W: Write>(self, result: &mut W) -> Result<&mut W, Error> {
+        if self {
+            result.write_all(&mut [1])
+        } else {
+            result.write_all(&mut [0])
+        }
+        .map(|_| result)
+    }
+    fn from_key<R: Read>(key: &mut R) -> Result<bool, Error> {
+        let mut slice = [0];
+        key.read(&mut slice)?;
+        Ok(slice[0] != 0)
+    }
+}
+
+#[test]
+fn test_bool() {
+    assert_eq!(from_key::<bool>(to_key(true)).unwrap(), true);
+    assert_eq!(to_key(true), vec![1]);
+}
+
 macro_rules! impl_tuple {
     ( $( $v:ident ),+ ) => {
         impl< $( $v ),+ > IndexKey for ( $($v),+ )
@@ -220,11 +242,23 @@ impl_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11);
 fn test_tuple() {
     let list1: Vec<u8> = vec![1, 2, 1, 2, 0];
     let list2: Vec<u8> = vec![1, 2, 1, 2, 2];
-    let key = to_key((list1.clone(), list2.clone()));
+    let string: String = "123".to_owned();
+    let key = to_key((
+        list1.clone(),
+        list2.clone(),
+        string.clone(),
+        true,
+        1.0f32,
+        1i64,
+    ));
     dbg!(key.clone());
-    let (l1, l2): (Vec<u8>, Vec<u8>) = from_key(key).unwrap();
+    let (l1, l2, s, b, f, i): (Vec<u8>, Vec<u8>, String, bool, f32, i64) = from_key(key).unwrap();
     assert_eq!(list1, l1);
     assert_eq!(list2, l2);
+    assert_eq!(string, s);
+    assert_eq!(true, b);
+    assert_eq!(1.0f32, f);
+    assert_eq!(1i64, i);
 }
 
 pub fn escape_encode<'a, R: Read, W: Write>(
