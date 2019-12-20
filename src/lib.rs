@@ -1,54 +1,60 @@
 //! lexicographic sort order encoding.
 
+use std::io::Cursor;
+use std::io::Error;
+use std::io::Read;
+use std::io::Write;
+
 pub trait IndexKey: Sized {
-    fn to_key(&self) -> Vec<u8>;
-    fn from_key(key: &[u8]) -> Self;
+    fn to_key<W: Write>(self, result: &mut W) -> Result<&mut W, Error>;
+    fn from_key<R: Read>(key: &mut R) -> Result<Self, Error>;
 }
 
 impl IndexKey for String {
     #[inline]
-    fn to_key(&self) -> Vec<u8> {
-        self.as_bytes().to_vec()
+    fn to_key<W: Write>(self, result: &mut W) -> Result<&mut W, Error> {
+        self.into_bytes().to_key(result)
     }
     #[inline]
-    fn from_key(src: &[u8]) -> String {
-        String::from_utf8_lossy(src).to_string()
+    fn from_key<R: Read>(key: &mut R) -> Result<Self, Error> {
+        Ok(String::from_utf8_lossy(&Vec::<u8>::from_key(key)?).to_string())
     }
 }
 
 #[test]
 fn test_string() {
     let s: String = "123".into();
-    assert_eq!(String::from_key(&s.to_key()), s)
+    assert_eq!(from_key::<String>(to_key(s.clone())).unwrap(), s)
 }
 
 impl IndexKey for Vec<u8> {
-    fn to_key(&self) -> Vec<u8> {
-        self.to_vec()
+    fn to_key<W: Write>(self, result: &mut W) -> Result<&mut W, Error> {
+        escape_encode(&mut Cursor::new(self), result)
     }
-    fn from_key(src: &[u8]) -> Vec<u8> {
-        src.to_vec()
+    fn from_key<R: Read>(key: &mut R) -> Result<Self, Error> {
+        let mut result = vec![];
+        escape_decode(key, &mut result)?;
+        Ok(result)
     }
 }
 
-macro_rules! from_slice {
-    ($t:ty,$src:expr) => {{
-        let mut val = [0u8; std::mem::size_of::<$t>()];
-        for (v, s) in val.iter_mut().zip($src) {
-            *v = *s;
-        }
-        val
-    }};
+#[test]
+fn test_vec_u8() {
+    let v = vec![1u8, 2, 3, 4];
+    assert_eq!(from_key::<Vec<u8>>(to_key(v.clone())).unwrap(), v);
 }
 
 macro_rules! impl_u {
     ($t:ident) => {
         impl IndexKey for $t {
-            fn to_key(&self) -> Vec<u8> {
-                self.to_be_bytes().to_vec()
+            fn to_key<W: Write>(self, result: &mut W) -> Result<&mut W, Error> {
+                result.write_all(&mut self.to_be_bytes())?;
+                Ok(result)
             }
-            fn from_key(src: &[u8]) -> $t {
-                <$t>::from_be_bytes(from_slice!($t, src))
+            fn from_key<R: Read>(key: &mut R) -> Result<$t, Error> {
+                let mut slice = [0u8; std::mem::size_of::<$t>()];
+                key.read_exact(&mut slice)?;
+                Ok(<$t>::from_be_bytes(slice))
             }
         }
         #[test]
@@ -56,8 +62,8 @@ macro_rules! impl_u {
             use std::$t::*;
             let mut list = vec![MAX, 1, 2, 0];
             list.sort_by_key(|value| {
-                assert_eq!(<$t>::from_key(&value.to_key()), *value);
-                value.to_key()
+                assert_eq!(from_key::<$t>(to_key(*value)).unwrap(), *value);
+                to_key(*value)
             });
             assert_eq!(list, vec![0, 1, 2, MAX]);
         }
@@ -73,13 +79,17 @@ impl_u!(u128);
 macro_rules! impl_i {
     ($t:ident) => {
         impl IndexKey for $t {
-            fn to_key(&self) -> Vec<u8> {
+            fn to_key<W: Write>(self, result: &mut W) -> Result<&mut W, Error> {
                 use std::$t::MIN;
-                (*self ^ MIN).to_be_bytes().to_vec()
+                let mut slice = (self ^ MIN).to_be_bytes();
+                result.write_all(&mut slice)?;
+                Ok(result)
             }
-            fn from_key(src: &[u8]) -> $t {
+            fn from_key<R: Read>(key: &mut R) -> Result<$t, Error> {
                 use std::$t::MIN;
-                <$t>::from_be_bytes(from_slice!($t, src)) ^ MIN
+                let mut slice = [0u8; std::mem::size_of::<$t>()];
+                key.read_exact(&mut slice)?;
+                Ok(<$t>::from_be_bytes(slice) ^ MIN)
             }
         }
         #[test]
@@ -87,8 +97,8 @@ macro_rules! impl_i {
             use std::$t::*;
             let mut list = vec![MAX, MIN, 1, 2, -1, -2, 0];
             list.sort_by_key(|value| {
-                assert_eq!(<$t>::from_key(&value.to_key()), *value);
-                value.to_key()
+                assert_eq!(from_key::<$t>(to_key(*value)).unwrap(), *value);
+                to_key(*value)
             });
             assert_eq!(list, vec![MIN, -2, -1, 0, 1, 2, MAX]);
         }
@@ -104,19 +114,24 @@ impl_i!(i128);
 macro_rules! impl_f {
     ($f:ty,$fi:ident,$i:ident,$u:ident,$n:expr) => {
         impl IndexKey for $f {
-            fn to_key(&self) -> Vec<u8> {
+            fn to_key<W: Write>(self, result: &mut W) -> Result<&mut W, Error> {
                 use std::mem::size_of;
                 use std::$i::MIN;
                 let value = self.to_bits() as $i;
-                (((value >> (size_of::<$i>() * 8 - 1)) | MIN) ^ value)
-                    .to_be_bytes()
-                    .to_vec()
+                let mut slice =
+                    (((value >> (size_of::<$i>() * 8 - 1)) | MIN) ^ value).to_be_bytes();
+                result.write_all(&mut slice)?;
+                Ok(result)
             }
-            fn from_key(src: &[u8]) -> $f {
+            fn from_key<R: Read>(key: &mut R) -> Result<$f, Error> {
                 use std::mem::size_of;
                 use std::$i::MIN;
-                let value = $i::from_be_bytes(from_slice!($f, src));
-                <$f>::from_bits(((!value >> (size_of::<$i>() * 8 - 1) | MIN) ^ value) as $u)
+                let mut slice = [0u8; std::mem::size_of::<$f>()];
+                key.read_exact(&mut slice)?;
+                let value = $i::from_be_bytes(slice);
+                Ok(<$f>::from_bits(
+                    ((!value >> (size_of::<$i>() * 8 - 1) | MIN) ^ value) as $u,
+                ))
             }
         }
         #[test]
@@ -137,8 +152,8 @@ macro_rules! impl_f {
                 NEG_INFINITY,
             ];
             list.sort_by_key(|value| {
-                assert_eq!(<$f>::from_key(&value.to_key()), *value);
-                value.to_key()
+                assert_eq!(from_key::<$f>(to_key(*value)).unwrap(), *value);
+                to_key(*value)
             });
             assert_eq!(
                 list,
@@ -157,10 +172,109 @@ macro_rules! impl_f {
                     INFINITY,
                 ]
             );
-            assert!(NAN.to_key() > INFINITY.to_key())
+            assert!(to_key(NAN) > to_key(INFINITY))
         }
     };
 }
 
 impl_f!(f32, f32, i32, u32, 31);
 impl_f!(f64, f64, i64, u64, 63);
+
+macro_rules! impl_tuple {
+    ( $( $v:ident ),+ ) => {
+        impl< $( $v ),+ > IndexKey for ( $($v),+ )
+        where
+            $( $v : IndexKey ,)+
+        {
+            #[inline]
+            #[allow(non_snake_case)]
+            fn to_key<W: Write>(self, result: &mut W) -> Result<&mut W, Error> {
+                let ($( $v,)+) = self;
+                $(
+                    $v.to_key(result)?;
+                )+
+                Ok(result)
+            }
+            #[inline]
+            fn from_key<R: Read>(key: &mut R) -> Result<( $($v),+ ), Error> {
+                Ok(( $(
+                    $v::from_key(key)?,
+                )+ ))
+            }
+        }
+    }
+}
+
+impl_tuple!(T1, T2);
+impl_tuple!(T1, T2, T3);
+impl_tuple!(T1, T2, T3, T4);
+impl_tuple!(T1, T2, T3, T4, T5);
+impl_tuple!(T1, T2, T3, T4, T5, T6);
+impl_tuple!(T1, T2, T3, T4, T5, T6, T7);
+impl_tuple!(T1, T2, T3, T4, T5, T6, T7, T8);
+impl_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9);
+impl_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10);
+impl_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11);
+
+#[test]
+fn test_tuple() {
+    let list1: Vec<u8> = vec![1, 2, 1, 2, 0];
+    let list2: Vec<u8> = vec![1, 2, 1, 2, 2];
+    let key = to_key((list1.clone(), list2.clone()));
+    dbg!(key.clone());
+    let (l1, l2): (Vec<u8>, Vec<u8>) = from_key(key).unwrap();
+    assert_eq!(list1, l1);
+    assert_eq!(list2, l2);
+}
+
+pub fn escape_encode<'a, R: Read, W: Write>(
+    src: &mut R,
+    result: &'a mut W,
+) -> Result<&'a mut W, Error> {
+    let mut buf = [0u8];
+    while src.read_exact(&mut buf).is_ok() {
+        let item = buf[0];
+        match item {
+            0 | 92 => result.write_all(&mut [92])?,
+            _ => (),
+        };
+        result.write_all(&mut buf)?;
+    }
+    result.write_all(&mut [0])?;
+    Ok(result)
+}
+
+pub fn escape_decode<'a, R: Read, W: Write>(
+    src: &mut R,
+    result: &'a mut W,
+) -> Result<&'a mut W, Error> {
+    let mut state = true;
+    let mut buf = [0u8];
+    while src.read_exact(&mut buf).is_ok() {
+        let item = buf[0];
+        if state {
+            match item {
+                0 => return Ok(result),
+                92 => {
+                    state = false;
+                    continue;
+                }
+                _ => (),
+            }
+        }
+        result.write_all(&mut buf)?;
+        state = true;
+    }
+    Ok(result)
+}
+
+pub fn to_key<I: IndexKey>(i: I) -> Vec<u8> {
+    let mut result = vec![];
+    let _ = i.to_key(&mut result);
+    result
+}
+
+pub fn from_key<I: IndexKey>(src: Vec<u8>) -> Result<I, Error> {
+    let mut cur = Cursor::new(src);
+    I::from_key(&mut cur)
+}
