@@ -70,11 +70,7 @@ impl Iterator for VecRange {
                 }
             }
             if state && (self.0.len() < max_len) {
-                if *self.0.last().unwrap() == 255 {
-                    self.0.push(0);
-                    break;
-                }
-                *self.0.last_mut().unwrap() += 1;
+                self.0.push(0);
                 break;
             }
             if *self.0.last().unwrap() == 255 {
@@ -93,7 +89,7 @@ impl Iterator for VecRange {
 fn test_vec_u8() {
     let v = vec![1u8, 2, 3, 4];
     assert_eq!(from_key::<Vec<u8>>(to_key(v.clone())).unwrap(), v);
-    let it = VecRange(vec![], 6);
+    let it = VecRange(vec![], 2);
     for (old_v, new_v) in it {
         assert!(to_key(new_v.clone()) > to_key(old_v.clone()));
     }
@@ -317,9 +313,9 @@ fn test_tuple() {
 
 #[test]
 fn test_tuple2() {
-    let it = VecRange(vec![], 2);
+    let it = VecRange(vec![], 1);
     for (a1, _) in it {
-        let it2 = VecRange(vec![], 2);
+        let it2 = VecRange(vec![], 1);
         for (a2, _) in it2 {
             for b1 in [0u16, 1, u16::max_value()].into_iter() {
                 for b2 in [0u16, 1, u16::max_value()].into_iter() {
