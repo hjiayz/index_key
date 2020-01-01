@@ -24,7 +24,19 @@ impl IndexKey for String {
 #[test]
 fn test_string() {
     let s: String = "123".into();
-    assert_eq!(from_key::<String>(to_key(s.clone())).unwrap(), s)
+    assert_eq!(from_key::<String>(to_key(s.clone())).unwrap(), s);
+
+    for c in '\0' as u32 .. ('😃' as u32) {
+        let a = std::char::from_u32(c);
+        let b = std::char::from_u32(c+1);
+        if a.is_none() {
+            continue;
+        }
+        if b.is_none() {
+            continue;
+        }
+        assert!(to_key(a.unwrap().to_string())<to_key(b.unwrap().to_string()));
+    }
 }
 
 impl IndexKey for Vec<u8> {
@@ -38,10 +50,54 @@ impl IndexKey for Vec<u8> {
     }
 }
 
+#[cfg(test)]
+struct VecRange(Vec<u8>,usize);
+
+#[cfg(test)]
+impl Iterator for VecRange {
+    type Item = (Vec<u8>,Vec<u8>);
+    fn next(&mut self)->Option<(Vec<u8>,Vec<u8>)> {
+        let mut state = true;
+        let max_len = self.1;
+        let old = self.0.clone();
+        loop {
+            if self.0.len() == 0 {
+                if state {
+                    self.0.push(0);
+                    break;
+                }
+                else {
+                    return None
+                }
+            }
+            if state && ( self.0.len() < max_len ) {
+                if *self.0.last().unwrap()==255 {
+                    self.0.push(0);
+                    break
+                }
+                *self.0.last_mut().unwrap()+=1;
+                break;
+            }
+            if *self.0.last().unwrap()==255 {
+                self.0.pop();
+                state = false;
+                continue;
+            }
+            *self.0.last_mut().unwrap()+=1;
+            break;
+        }
+        Some((old,self.0.clone()))
+    }
+}
+
 #[test]
 fn test_vec_u8() {
     let v = vec![1u8, 2, 3, 4];
     assert_eq!(from_key::<Vec<u8>>(to_key(v.clone())).unwrap(), v);
+    let it = VecRange(vec![],6);
+    for (old_v,new_v) in it {
+        assert!(to_key(new_v.clone())>to_key(old_v.clone()));
+    }
 }
 
 macro_rules! impl_u {
@@ -251,7 +307,7 @@ fn test_tuple() {
         1.0f32,
         1i64,
     ));
-    dbg!(key.clone());
+
     let (l1, l2, s, b, f, i): (Vec<u8>, Vec<u8>, String, bool, f32, i64) = from_key(key).unwrap();
     assert_eq!(list1, l1);
     assert_eq!(list2, l2);
@@ -259,6 +315,31 @@ fn test_tuple() {
     assert_eq!(true, b);
     assert_eq!(1.0f32, f);
     assert_eq!(1i64, i);
+
+}
+
+#[test]
+fn test_tuple2() {
+    let it = VecRange(vec![],2);
+    for (a1,_) in it {
+        let it2 = VecRange(vec![],2);
+        for (a2,_) in it2 {
+            for b1 in [0u16,1,u16::max_value()].into_iter() {
+                for b2 in [0u16,1,u16::max_value()].into_iter() {
+                    let (b1,b2)=(*b1,*b2);
+                    if a1<a2 {
+                        assert!( to_key((a1.clone(),b1))<to_key((a2.clone(),b2)) );
+                        continue;
+                    }
+                    if a1>a2 {
+                        assert!( to_key((a1.clone(),b1))>to_key((a2.clone(),b2))) ;
+                        continue;
+                    }
+                    assert!( b1.cmp(&b2) == to_key((a1.clone(),b1)).cmp( &to_key((a2.clone(),b2))) )
+                }
+            }
+        }
+    }
 }
 
 pub fn escape_encode<'a, R: Read, W: Write>(
@@ -269,7 +350,7 @@ pub fn escape_encode<'a, R: Read, W: Write>(
     while src.read_exact(&mut buf).is_ok() {
         let item = buf[0];
         match item {
-            0 | 92 => result.write_all(&mut [92])?,
+            0 | 1 => result.write_all(&mut [1])?,
             _ => (),
         };
         result.write_all(&mut buf)?;
@@ -289,7 +370,7 @@ pub fn escape_decode<'a, R: Read, W: Write>(
         if state {
             match item {
                 0 => return Ok(result),
-                92 => {
+                1 => {
                     state = false;
                     continue;
                 }
